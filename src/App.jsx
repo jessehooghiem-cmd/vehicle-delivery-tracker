@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Car, Plus, Search, Trash2, GripVertical, X } from "lucide-react";
+import { supabase } from "./supabase";
 
 const columns = [
   { key: "purchased", title: "Purchased", color: "#3b82f6" },
@@ -33,49 +34,24 @@ const auctionStyles = {
   }
 };
 
-const initialVehicles = [
-  {
-    id: 1,
-    info: "2021 Ford Explorer XLT\\nVIN ending 1234",
-    auction: "Windsor",
-    status: "purchased",
-    arbitrationReason: ""
-  },
-  {
-    id: 2,
-    info: "2020 Toyota Sienna LE\\nKeys and ownership ready",
-    auction: "Toronto",
-    status: "ready",
-    arbitrationReason: ""
-  },
-  {
-    id: 3,
-    info: "2019 Nissan Rogue SV\\nDamage claim started",
-    auction: "Openlane",
-    status: "arbitration",
-    arbitrationReason:
-      "Rear bumper damage not disclosed in listing. Photos provided to auction. Waiting for response."
-  }
-];
-
 const styles = {
-page: {
-  minHeight: "100vh",
-  width: "100vw",
-  background: "#08111d",
-  color: "#f8fafc",
-  fontFamily: "Arial, Helvetica, sans-serif",
-  padding: "12px",
-  boxSizing: "border-box",
-  overflowX: "hidden"
-},
-app: {
-  width: "100%",
-  maxWidth: "100%",
-  margin: "0",
-  transform: "none",
-  transformOrigin: "top left"
-},
+  page: {
+    minHeight: "100vh",
+    width: "100vw",
+    background: "#08111d",
+    color: "#f8fafc",
+    fontFamily: "Arial, Helvetica, sans-serif",
+    padding: "12px",
+    boxSizing: "border-box",
+    overflowX: "hidden"
+  },
+  app: {
+    width: "100%",
+    maxWidth: "100%",
+    margin: "0",
+    transform: "none",
+    transformOrigin: "top left"
+  },
   header: {
     display: "flex",
     alignItems: "center",
@@ -105,12 +81,12 @@ app: {
     color: "#d1d5db",
     fontSize: "18px"
   },
-layout: {
-  display: "grid",
-  gridTemplateColumns: "260px minmax(0, 1fr)",
-  gap: "10px",
-  alignItems: "start"
-},
+  layout: {
+    display: "grid",
+    gridTemplateColumns: "260px minmax(0, 1fr)",
+    gap: "10px",
+    alignItems: "start"
+  },
   sidebar: {
     borderRadius: "14px",
     border: "1px solid rgba(148, 163, 184, 0.32)",
@@ -200,6 +176,14 @@ layout: {
     fontSize: "16px",
     outline: "none"
   },
+  errorBox: {
+    background: "#7f1d1d",
+    color: "#fee2e2",
+    padding: "10px",
+    borderRadius: "8px",
+    fontSize: "13px",
+    marginBottom: "14px"
+  },
   legendItem: {
     display: "flex",
     alignItems: "center",
@@ -216,11 +200,11 @@ layout: {
     display: "inline-block"
   },
   board: {
-  display: "grid",
-  gridTemplateColumns: "repeat(4, minmax(180px, 1fr))",
-  gap: "10px",
-  width: "100%"
-},
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(180px, 1fr))",
+    gap: "10px",
+    width: "100%"
+  },
   column: {
     minHeight: "680px",
     borderRadius: "14px",
@@ -417,8 +401,18 @@ layout: {
   }
 };
 
+function dbVehicleToAppVehicle(vehicle) {
+  return {
+    id: vehicle.id,
+    info: vehicle.info || "",
+    auction: vehicle.auction || "Windsor",
+    status: vehicle.status || "purchased",
+    arbitrationReason: vehicle.arbitration_reason || ""
+  };
+}
+
 export default function VehicleDeliveryTracker() {
-  const [vehicles, setVehicles] = useState(initialVehicles);
+  const [vehicles, setVehicles] = useState([]);
   const [vehicleInfo, setVehicleInfo] = useState("");
   const [auction, setAuction] = useState("Windsor");
   const [search, setSearch] = useState("");
@@ -426,6 +420,41 @@ export default function VehicleDeliveryTracker() {
   const [hoveredId, setHoveredId] = useState(null);
   const [arbitrationModal, setArbitrationModal] = useState(null);
   const [arbitrationReason, setArbitrationReason] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    fetchVehicles();
+
+    const channel = supabase
+      .channel("vehicles-live-updates")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "vehicles" },
+        () => {
+          fetchVehicles();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  async function fetchVehicles() {
+    const { data, error } = await supabase
+      .from("vehicles")
+      .select("*")
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setErrorMessage("");
+    setVehicles((data || []).map(dbVehicleToAppVehicle));
+  }
 
   const filteredVehicles = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -437,31 +466,42 @@ export default function VehicleDeliveryTracker() {
     );
   }, [vehicles, search]);
 
-  function addVehicle(event) {
+  async function addVehicle(event) {
     event.preventDefault();
     if (!vehicleInfo.trim()) return;
 
-    const newVehicle = {
-      id: Date.now(),
+    const { error } = await supabase.from("vehicles").insert({
       info: vehicleInfo.trim(),
       auction,
       status: "purchased",
-      arbitrationReason: ""
-    };
+      arbitration_reason: ""
+    });
 
-    setVehicles((current) => [newVehicle, ...current]);
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
     setVehicleInfo("");
     setAuction("Windsor");
+    fetchVehicles();
   }
 
-  function moveVehicle(vehicleId, newStatus) {
+  async function moveVehicle(vehicleId, newStatus) {
     const vehicle = vehicles.find((item) => item.id === vehicleId);
 
-    setVehicles((current) =>
-      current.map((item) =>
-        item.id === vehicleId ? { ...item, status: newStatus } : item
-      )
-    );
+    const { error } = await supabase
+      .from("vehicles")
+      .update({ status: newStatus })
+      .eq("id", vehicleId);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setErrorMessage("");
+    fetchVehicles();
 
     if (newStatus === "arbitration" && vehicle?.status !== "arbitration") {
       setArbitrationModal(vehicleId);
@@ -469,8 +509,16 @@ export default function VehicleDeliveryTracker() {
     }
   }
 
-  function deleteVehicle(vehicleId) {
-    setVehicles((current) => current.filter((vehicle) => vehicle.id !== vehicleId));
+  async function deleteVehicle(vehicleId) {
+    const { error } = await supabase.from("vehicles").delete().eq("id", vehicleId);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setErrorMessage("");
+    fetchVehicles();
   }
 
   function onDrop(columnKey) {
@@ -480,16 +528,21 @@ export default function VehicleDeliveryTracker() {
     }
   }
 
-  function saveArbitrationReason() {
-    setVehicles((current) =>
-      current.map((vehicle) =>
-        vehicle.id === arbitrationModal
-          ? { ...vehicle, arbitrationReason: arbitrationReason.trim() }
-          : vehicle
-      )
-    );
+  async function saveArbitrationReason() {
+    const { error } = await supabase
+      .from("vehicles")
+      .update({ arbitration_reason: arbitrationReason.trim() })
+      .eq("id", arbitrationModal);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setErrorMessage("");
     setArbitrationModal(null);
     setArbitrationReason("");
+    fetchVehicles();
   }
 
   function closeArbitrationModal() {
@@ -513,6 +566,8 @@ export default function VehicleDeliveryTracker() {
         <div style={styles.layout}>
           <aside style={styles.sidebar}>
             <h2 style={styles.sectionTitle}>Add New Vehicle</h2>
+
+            {errorMessage && <div style={styles.errorBox}>{errorMessage}</div>}
 
             <form onSubmit={addVehicle}>
               <label style={styles.label}>Vehicle Information</label>
@@ -601,7 +656,7 @@ export default function VehicleDeliveryTracker() {
                     </div>
                   ) : (
                     columnVehicles.map((vehicle) => {
-                      const cardStyle = auctionStyles[vehicle.auction];
+                      const cardStyle = auctionStyles[vehicle.auction] || auctionStyles.Windsor;
                       const shouldShowTooltip =
                         vehicle.status === "arbitration" &&
                         hoveredId === vehicle.id &&
@@ -702,4 +757,3 @@ export default function VehicleDeliveryTracker() {
     </div>
   );
 }
-
