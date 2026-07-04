@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Car, Plus, Search, Trash2, GripVertical, X } from "lucide-react";
+import { Car, Plus, Search, Trash2, GripVertical, X, Pencil } from "lucide-react";
 import { supabase } from "./supabase";
 
 const columns = [
@@ -184,6 +184,12 @@ const styles = {
     fontSize: "13px",
     marginBottom: "14px"
   },
+  helperText: {
+    color: "#cbd5e1",
+    fontSize: "13px",
+    lineHeight: "1.45",
+    marginTop: "10px"
+  },
   legendItem: {
     display: "flex",
     alignItems: "center",
@@ -277,7 +283,7 @@ const styles = {
   },
   vehicleTop: {
     display: "grid",
-    gridTemplateColumns: "18px 1fr 20px",
+    gridTemplateColumns: "18px 1fr 44px",
     gap: "10px",
     alignItems: "start"
   },
@@ -291,7 +297,12 @@ const styles = {
     overflowWrap: "break-word",
     textAlign: "left"
   },
-  deleteButton: {
+  cardButtons: {
+    display: "flex",
+    gap: "6px",
+    justifyContent: "flex-end"
+  },
+  iconButton: {
     border: "none",
     background: "transparent",
     color: "inherit",
@@ -405,7 +416,7 @@ function dbVehicleToAppVehicle(vehicle) {
   return {
     id: vehicle.id,
     info: vehicle.info || "",
-    auction: vehicle.auction || "Windsor",
+    auction: vehicle.auction || "Toronto",
     status: vehicle.status || "purchased",
     arbitrationReason: vehicle.arbitration_reason || ""
   };
@@ -414,12 +425,15 @@ function dbVehicleToAppVehicle(vehicle) {
 export default function VehicleDeliveryTracker() {
   const [vehicles, setVehicles] = useState([]);
   const [vehicleInfo, setVehicleInfo] = useState("");
-  const [auction, setAuction] = useState("Windsor");
+  const [auction, setAuction] = useState("Toronto");
   const [search, setSearch] = useState("");
   const [draggingId, setDraggingId] = useState(null);
   const [hoveredId, setHoveredId] = useState(null);
   const [arbitrationModal, setArbitrationModal] = useState(null);
   const [arbitrationReason, setArbitrationReason] = useState("");
+  const [editModal, setEditModal] = useState(null);
+  const [editInfo, setEditInfo] = useState("");
+  const [editAuction, setEditAuction] = useState("Toronto");
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
@@ -470,9 +484,11 @@ export default function VehicleDeliveryTracker() {
     event.preventDefault();
     if (!vehicleInfo.trim()) return;
 
+    const selectedAuction = auction || "Toronto";
+
     const { error } = await supabase.from("vehicles").insert({
       info: vehicleInfo.trim(),
-      auction,
+      auction: selectedAuction,
       status: "purchased",
       arbitration_reason: ""
     });
@@ -483,7 +499,7 @@ export default function VehicleDeliveryTracker() {
     }
 
     setVehicleInfo("");
-    setAuction("Windsor");
+    setAuction("Toronto");
     fetchVehicles();
   }
 
@@ -550,6 +566,37 @@ export default function VehicleDeliveryTracker() {
     setArbitrationReason("");
   }
 
+  function openEditModal(vehicle) {
+    setEditModal(vehicle.id);
+    setEditInfo(vehicle.info);
+    setEditAuction(vehicle.auction || "Toronto");
+  }
+
+  function closeEditModal() {
+    setEditModal(null);
+    setEditInfo("");
+    setEditAuction("Toronto");
+  }
+
+  async function saveVehicleEdits() {
+    const { error } = await supabase
+      .from("vehicles")
+      .update({
+        info: editInfo.trim(),
+        auction: editAuction || "Toronto"
+      })
+      .eq("id", editModal);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setErrorMessage("");
+    closeEditModal();
+    fetchVehicles();
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.app}>
@@ -592,6 +639,7 @@ export default function VehicleDeliveryTracker() {
                   </option>
                 ))}
               </select>
+              <p style={styles.helperText}>If no auction source is changed, Toronto is used automatically.</p>
 
               <button type="submit" style={styles.addButton}>
                 <Plus size={22} /> Add Vehicle
@@ -656,7 +704,7 @@ export default function VehicleDeliveryTracker() {
                     </div>
                   ) : (
                     columnVehicles.map((vehicle) => {
-                      const cardStyle = auctionStyles[vehicle.auction] || auctionStyles.Windsor;
+                      const cardStyle = auctionStyles[vehicle.auction] || auctionStyles.Toronto;
                       const shouldShowTooltip =
                         vehicle.status === "arbitration" &&
                         hoveredId === vehicle.id &&
@@ -666,6 +714,7 @@ export default function VehicleDeliveryTracker() {
                         <article
                           key={vehicle.id}
                           draggable
+                          onClick={() => openEditModal(vehicle)}
                           onDragStart={() => setDraggingId(vehicle.id)}
                           onDragEnd={() => setDraggingId(null)}
                           onMouseEnter={() => setHoveredId(vehicle.id)}
@@ -675,18 +724,35 @@ export default function VehicleDeliveryTracker() {
                             background: cardStyle.background,
                             color: cardStyle.text
                           }}
+                          title="Click to edit this vehicle"
                         >
                           <div style={styles.vehicleTop}>
                             <GripVertical size={20} opacity={0.58} />
                             <p style={styles.vehicleInfo}>{vehicle.info}</p>
-                            <button
-                              type="button"
-                              style={styles.deleteButton}
-                              title="Delete vehicle"
-                              onClick={() => deleteVehicle(vehicle.id)}
-                            >
-                              <Trash2 size={19} />
-                            </button>
+                            <div style={styles.cardButtons}>
+                              <button
+                                type="button"
+                                style={styles.iconButton}
+                                title="Edit vehicle"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openEditModal(vehicle);
+                                }}
+                              >
+                                <Pencil size={18} />
+                              </button>
+                              <button
+                                type="button"
+                                style={styles.iconButton}
+                                title="Delete vehicle"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  deleteVehicle(vehicle.id);
+                                }}
+                              >
+                                <Trash2 size={19} />
+                              </button>
+                            </div>
                           </div>
 
                           {shouldShowTooltip && (
@@ -712,7 +778,7 @@ export default function VehicleDeliveryTracker() {
 
         <footer style={styles.footer}>
           <GripVertical size={21} />
-          Drag and drop vehicles between columns to update status.
+          Drag and drop vehicles between columns to update status. Click a vehicle card to edit it.
         </footer>
       </div>
 
@@ -749,6 +815,56 @@ export default function VehicleDeliveryTracker() {
               </button>
               <button type="button" style={styles.saveButton} onClick={saveArbitrationReason}>
                 Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editModal && (
+        <div style={styles.overlay}>
+          <div style={styles.modal}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>Edit Vehicle</h2>
+              <button
+                type="button"
+                onClick={closeEditModal}
+                style={{ border: "none", background: "transparent", color: "#cbd5e1", cursor: "pointer" }}
+              >
+                <X size={25} />
+              </button>
+            </div>
+
+            <label style={styles.label}>Vehicle Information</label>
+            <textarea
+              value={editInfo}
+              onChange={(event) => setEditInfo(event.target.value)}
+              placeholder="Edit vehicle info..."
+              style={{ ...styles.textarea, minHeight: "130px" }}
+              autoFocus
+            />
+
+            <div style={{ height: "20px" }} />
+
+            <label style={styles.label}>Auction Source</label>
+            <select
+              value={editAuction}
+              onChange={(event) => setEditAuction(event.target.value)}
+              style={styles.select}
+            >
+              {auctions.map((auctionName) => (
+                <option key={auctionName} value={auctionName}>
+                  {auctionName}
+                </option>
+              ))}
+            </select>
+
+            <div style={styles.modalButtons}>
+              <button type="button" style={styles.cancelButton} onClick={closeEditModal}>
+                Cancel
+              </button>
+              <button type="button" style={styles.saveButton} onClick={saveVehicleEdits}>
+                Save Changes
               </button>
             </div>
           </div>
